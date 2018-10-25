@@ -31,18 +31,27 @@ class Restaurant {
 }
 
 protocol CloudKitSynchronizerDelegate: class {
-    func receivedResponse(with error: Error?)
+    func receivedResponse(with response: CloudKitSynchronizer.Response)
 }
 
 class CloudKitSynchronizer {
 
+    public enum Response {
+        case emptyRecord
+        case foundModifiedVote
+        case votesCount
+        case generalError
+        case versionNumber
+        case success
+    }
+    
     public weak var delegate: CloudKitSynchronizerDelegate?
     public var restaurants = [Restaurant]()
     
     // MARK: - Public methods
     
     public func fetchRecords(completion: @escaping ([Restaurant], _ canIVote: Bool) -> ()) {
-        fetchRestaurantRecords { _ in
+        self.fetchRestaurantRecords { _ in
             self.fetchVoteRecords { (restaurants, canIVote) in
                 completion(restaurants, canIVote)
             }
@@ -51,12 +60,18 @@ class CloudKitSynchronizer {
     
     public func sendVotes() {
         let restaurants = self.restaurants.filter { $0.vote != nil }
+        
+        guard restaurants.count == 3 else {
+            delegate?.receivedResponse(with: Response.votesCount)
+            return
+        }
+        
         let publicDatabase = CKContainer.default().publicCloudDatabase
         
-        var receivedError: Error?
+        var receivedError = Response.success
         
         for restaurant in restaurants {
-            guard receivedError == nil,  let vote = restaurant.vote else { return }
+            guard receivedError != .success,  let vote = restaurant.vote else { return }
             
             let reference = CKRecord.Reference(recordID: restaurant.recordID, action: .none)
             let voteRecord = CKRecord(recordType: "Votes")
@@ -64,10 +79,10 @@ class CloudKitSynchronizer {
             voteRecord.setObject(reference, forKey: "restaurant")
             
             publicDatabase.save(voteRecord) { (record, error) -> Void in
-                if let error = error {
-                    receivedError = error
+                if error != nil {
+                    receivedError = .generalError
                 } else if record == nil {
-                    receivedError = NSError()
+                    receivedError = .emptyRecord
                 }
             }
         }
@@ -82,12 +97,12 @@ class CloudKitSynchronizer {
         
         let publicDatabase = CKContainer.default().publicCloudDatabase
         publicDatabase.save(restaurantRecord) { (record, error) -> Void in
-            var receivedError: Error?
+            var receivedError = Response.success
             
-            if let error = error {
-                receivedError = error
+            if error != nil {
+                receivedError = .generalError
             } else if record == nil {
-                receivedError = NSError()
+                receivedError = .emptyRecord
             }
             
             self.delegate?.receivedResponse(with: receivedError)
@@ -136,8 +151,22 @@ class CloudKitSynchronizer {
         
         var canIVote = true
         
+        var users = [String: Int]()
+        
         let query = CKQuery(recordType: "Votes", predicate: NSPredicate(format: "creationDate > %@", today as NSDate))
         publicDatabase.perform(query, inZoneWith: nil) { (records, error) in
+            // Map votes count to users
+            records?.forEach({ (record) in
+                guard let userHash = record.creatorUserRecordID?.recordName else { return }
+                
+                if let user = users[userHash] {
+                    users[userHash] = user + 1
+                } else {
+                    users[userHash] = 1
+                }
+            })
+            
+            // Map votes to restaurants
             records?.forEach({ (record) in
                 
                 // Check if I did vote today
@@ -145,8 +174,15 @@ class CloudKitSynchronizer {
                     canIVote = false
                 }
                 
-                // TODO: Check if other users have exactly 3 votes
-                // TODO: Check if votes aren't modified
+                // Check for modified records and remove them
+                guard let modificationDate = record.modificationDate, let creationDate = record.creationDate, modificationDate == creationDate else {
+                    publicDatabase.delete(withRecordID: record.recordID, completionHandler: { (_, _) in
+                    })
+                    return
+                }
+                
+                // Check if user has exactly 3 votes
+                guard let userHash = record.creatorUserRecordID?.recordName, users[userHash] == 3 else { return }
                 
                 guard let priority = record.value(forKey: "priority") as? String, let vote = Votes.init(rawValue: priority) else { return }
                 

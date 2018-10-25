@@ -50,6 +50,7 @@ class RestaurantsViewController: UIViewController {
     }
     
     @IBAction func reloadBarButtonPressed(_ sender: Any) {
+        unusedVotes = [Votes.low, Votes.medium, Votes.high]
         synchronizer.fetchRecords { [weak self] (_, canIVote) in
             self?.canIvote = canIVote
             self?.updateTable()
@@ -129,13 +130,22 @@ extension RestaurantsViewController: UITableViewDataSource {
 
 extension RestaurantsViewController: CloudKitSynchronizerDelegate {
     
-    func receivedResponse(with error: Error?) {
+    func receivedResponse(with response: CloudKitSynchronizer.Response) {
         let alertController: UIAlertController
         
-        if let error = error {
-            alertController = UIAlertController(title: "Error", message: "Error occured. Error: \(error)", preferredStyle: .alert)
-        } else {
-            alertController = UIAlertController(title: "Good!", message: "Everything gonna be ok", preferredStyle: .alert)
+        switch response {
+        case .emptyRecord:
+            alertController = UIAlertController(title: "Error!", message: "Received unsaved record.", preferredStyle: .alert)
+        case .foundModifiedVote:
+            alertController = UIAlertController(title: "Error!", message: "Someone modified votes.", preferredStyle: .alert)
+        case .votesCount:
+            alertController = UIAlertController(title: "Error!", message: "Some votes must be deleted.", preferredStyle: .alert)
+        case .generalError:
+            alertController = UIAlertController(title: "Error!", message: "Error occured.", preferredStyle: .alert)
+        case .versionNumber:
+            alertController = UIAlertController(title: "Update!", message: "Download new version", preferredStyle: .alert)
+        case .success:
+            alertController = UIAlertController(title: "Good!", message: "Everything gonna be ok.", preferredStyle: .alert)
         }
         
         DispatchQueue.main.async {
