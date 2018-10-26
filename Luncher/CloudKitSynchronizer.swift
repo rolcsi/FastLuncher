@@ -71,7 +71,7 @@ class CloudKitSynchronizer {
         var receivedError = Response.success
         
         for restaurant in restaurants {
-            guard receivedError != .success,  let vote = restaurant.vote else { return }
+            guard receivedError == .success,  let vote = restaurant.vote else { return }
             
             let reference = CKRecord.Reference(recordID: restaurant.recordID, action: .none)
             let voteRecord = CKRecord(recordType: "Votes")
